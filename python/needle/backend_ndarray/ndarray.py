@@ -247,7 +247,11 @@ class NDArray:
         """
 
         ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
+        if prod(new_shape) != prod(self._shape):
+            raise RuntimeError("should equal")
+        if not self.is_compact():
+            raise ValueError("should be compact")
+        return self.as_strided(new_shape, self.compact_strides(new_shape))
         ### END YOUR SOLUTION
 
     def permute(self, new_axes):
@@ -272,7 +276,12 @@ class NDArray:
         """
 
         ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
+        if not tuple(sorted(new_axes)) == tuple(range(len(self._shape))):
+            raise ValueError("should be permutable")
+        # get new shape by axes
+        new_shape = tuple(self._shape[index] for index in new_axes)
+        new_stride = tuple(self._strides[index] for index in new_axes)
+        return self.make(shape=new_shape, strides=new_stride, device=self.device, handle=self._handle, offset=self._offset)
         ### END YOUR SOLUTION
 
     def broadcast_to(self, new_shape):
@@ -296,7 +305,18 @@ class NDArray:
         """
 
         ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
+        # broadcast会将shape为1的维度进行广播，创建一个新的维度视图，但是底层数据不变
+        # shape肯定需要为新的shape
+        # stride是否需要变化呢？需要，理论上来说，维度为1的那个维度的stride需要为改变
+        # 核心是：如何基于index计算公式算出原来的公式呢？
+        # shape -> 新shape
+        # offset -> 不变
+        # stride -> 公式中 a * s1 + b * s2 假如第二维度被广播（默认广播都是shape为1的维度），那么这个维度计算index时都要为1才对
+        # (2, 0) (2, 1) -> 本质上都是(2, 0) 怎么才能做到这样的操作呢？
+        # 2 * s1 + 0 * s2 = 2 * s1 + 1 * s2
+        # 发现了华点：在原来的array中，被广播的维度只可能为0，这意味着改为都的stride实际上是不起作用的，所以，我们将这个stride置为0即可
+        new_stride = tuple(self._strides[i] if self._shape[i] != 1 or new_shape[i] == 1 else 0 for i, j in enumerate(new_shape))
+        return self.make(shape=new_shape, strides=new_stride, device=self.device, handle=self._handle, offset=self._offset)
         ### END YOUR SOLUTION
 
     ### Get and set elements
@@ -363,7 +383,13 @@ class NDArray:
         assert len(idxs) == self.ndim, "Need indexes equal to number of dimensions"
 
         ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
+        # shape很简单，会更具切片的长度改变
+        # offset很简单，会更具新切片的第一个元素在原来的offset，然后再加上初始的offset即可
+        # stride在连续时不改变，但是一旦步长不为1，需要加倍
+        new_offset = int(self._offset + math.fsum([j.start * self._strides[i] for i, j in enumerate(idxs)]))
+        new_strides = tuple(int(self.strides[i] * j.step) for i, j in enumerate(idxs))
+        new_shape = tuple(int((i.stop - i.start) / i.step) if (i.stop - i.start) % i.step == 0 else int((i.stop - i.start) / i.step) + 1 for i in idxs)
+        return self.make(shape=new_shape, strides=new_strides, offset=new_offset, device=self.device, handle=self._handle)
         ### END YOUR SOLUTION
 
     def __setitem__(self, idxs, other):
